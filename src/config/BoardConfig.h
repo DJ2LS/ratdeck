@@ -19,8 +19,10 @@
 // --- SX1262 Radio Configuration ---
 #define LORA_HAS_TCXO           true
 #define LORA_DIO2_AS_RF_SWITCH  true
-// TCXO voltage: 1.8V for T-Deck Plus integrated SX1262 (Ratputer Cap LoRa uses 3.0V/0x06)
+// TCXO voltage: 1.8V for T-Deck Plus integrated SX1262 (Cardputer Cap LoRa uses 3.0V/0x06)
 #define LORA_TCXO_VOLTAGE       0x02   // MODE_TCXO_1_8V_6X
+#define LORA_USE_DCDC_REGULATOR true    // T-Deck Plus integrated SX1262 works in DC-DC regulator mode
+#define LORA_OCP_TUNED          0x38    // Existing T-Deck PA tuning
 #define LORA_DEFAULT_FREQ       915000000
 #define LORA_DEFAULT_BW         250000   // Long Fast preset
 #define LORA_DEFAULT_SF         11

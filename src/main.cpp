@@ -388,12 +388,18 @@ void onHotkeyDiag() {
                       (unsigned long)radio.getSignalBandwidth(),
                       radio.getCodingRate4(),
                       radio.getTxPower());
+        Serial.printf("Regulator: %s\n", LORA_USE_DCDC_REGULATOR ? "DC-DC" : "LDO");
         Serial.printf("Preamble: %ld symbols\n", radio.getPreambleLength());
+        Serial.printf("IQ invert: %s\n", radio.getInvertIQ() ? "ON" : "off");
+        Serial.printf("SyncWord regs: 0x%02X%02X\n",
+            radio.readRegister(REG_SYNC_WORD_MSB_6X),
+            radio.readRegister(REG_SYNC_WORD_LSB_6X));
         uint16_t devErr = radio.getDeviceErrors();
         uint8_t status = radio.getStatus();
         Serial.printf("DevErrors: 0x%04X  Status: 0x%02X (mode=%d cmd=%d)\n",
             devErr, status, (status >> 4) & 0x07, (status >> 1) & 0x07);
         if (devErr & 0x40) Serial.println("  *** PLL LOCK FAILED ***");
+        Serial.printf("IRQ flags: 0x%04X\n", radio.getIrqFlags());
         Serial.printf("Current RSSI: %d dBm\n", radio.currentRssi());
         uint8_t packetType = radio.getPacketType();
         const char* packetTypeName =
@@ -408,6 +414,45 @@ void onHotkeyDiag() {
                   (unsigned long)ESP.getFreeHeap(), (unsigned long)ESP.getFreePsram());
     Serial.printf("Uptime: %lu s\n", millis() / 1000);
     Serial.println("=======================");
+}
+
+static void printIrqFlags(uint16_t flags) {
+    Serial.printf("0x%04X", flags);
+    if (flags & 0x0001) Serial.print(" TX_DONE");
+    if (flags & 0x0002) Serial.print(" RX_DONE");
+    if (flags & 0x0004) Serial.print(" PREAMBLE");
+    if (flags & 0x0008) Serial.print(" SYNC");
+    if (flags & 0x0010) Serial.print(" HEADER_VALID");
+    if (flags & 0x0020) Serial.print(" HEADER_ERR");
+    if (flags & 0x0040) Serial.print(" CRC_ERR");
+    if (flags & 0x0080) Serial.print(" CAD_DONE");
+    if (flags & 0x0100) Serial.print(" CAD_DET");
+    if (flags & 0x0200) Serial.print(" TIMEOUT");
+}
+
+void onHotkeyIrqMonitor() {
+    if (!radioOnline) { Serial.println("[IRQ] Radio offline"); return; }
+
+    radio.receive();
+    Serial.println("[IRQ] Sampling IRQ/RSSI for 5 seconds...");
+    uint16_t lastFlags = 0xFFFF;
+    unsigned long start = millis();
+    unsigned long lastLine = 0;
+    while (millis() - start < 5000) {
+        uint16_t flags = radio.getIrqFlags();
+        unsigned long now = millis();
+        if (flags != lastFlags || now - lastLine >= 500) {
+            Serial.printf("[IRQ] t=%lums rssi=%d flags=",
+                          now - start, radio.currentRssi());
+            printIrqFlags(flags);
+            Serial.println();
+            lastFlags = flags;
+            lastLine = now;
+        }
+        delay(50);
+    }
+    radio.receive();
+    Serial.println("[IRQ] Done");
 }
 
 // RSSI monitor — non-blocking state machine (sampled in main loop)
@@ -444,6 +489,101 @@ void onHotkeyRadioTest() {
     bool ok = radio.endPacket();
     Serial.printf("[TEST] TX %s (%d bytes)\n", ok ? "OK" : "FAILED", (int)(1 + strlen(testPayload)));
     radio.receive();
+}
+
+static void cycleDiagnosticTxPower() {
+    static constexpr int8_t kPowers[] = {-9, -3, 0, 2, 6, 10, 14, 17, 22};
+    int current = radio.getTxPower();
+    size_t next = 0;
+    for (size_t i = 0; i < sizeof(kPowers) / sizeof(kPowers[0]); i++) {
+        if (current == kPowers[i]) {
+            next = (i + 1) % (sizeof(kPowers) / sizeof(kPowers[0]));
+            break;
+        }
+    }
+
+    radio.setTxPower(kPowers[next]);
+    radio.receive();
+    Serial.printf("[SERIAL] transient TX power set to %d dBm\n", (int)kPowers[next]);
+}
+
+static void setDiagnosticMinTxPower() {
+    radio.setTxPower(-9);
+    radio.receive();
+    Serial.println("[SERIAL] transient TX power set to -9 dBm");
+}
+
+static void toggleDiagnosticInvertIQ() {
+    radio.setInvertIQ(!radio.getInvertIQ());
+    radio.receive();
+    Serial.printf("[SERIAL] IQ inversion %s\n", radio.getInvertIQ() ? "ON" : "off");
+}
+
+static void nudgeDiagnosticFrequency(int32_t deltaHz) {
+    uint32_t next = radio.getFrequency() + deltaHz;
+    radio.setFrequency(next);
+    radio.receive();
+    Serial.printf("[SERIAL] transient frequency set to %lu Hz\n", (unsigned long)next);
+}
+
+static void printSerialHelp() {
+    Serial.println("[SERIAL] commands: ? help | a announce | t raw-test | d diag | r rssi | i irq | p tx-power | m min-power | q iq | +/- freq");
+}
+
+static void handleSerialCommands() {
+    while (Serial.available() > 0) {
+        char c = (char)Serial.read();
+        if (c == '\r' || c == '\n' || c == ' ') continue;
+        switch (c) {
+            case '?':
+                printSerialHelp();
+                break;
+            case 'a':
+            case 'A':
+                onHotkeyAnnounce();
+                break;
+            case 't':
+            case 'T':
+                onHotkeyRadioTest();
+                break;
+            case 'd':
+            case 'D':
+                onHotkeyDiag();
+                break;
+            case 'r':
+            case 'R':
+                onHotkeyRssiMonitor();
+                break;
+            case 'i':
+            case 'I':
+                onHotkeyIrqMonitor();
+                break;
+            case 'p':
+            case 'P':
+                cycleDiagnosticTxPower();
+                break;
+            case 'm':
+            case 'M':
+                setDiagnosticMinTxPower();
+                break;
+            case 'q':
+            case 'Q':
+                toggleDiagnosticInvertIQ();
+                break;
+            case '+':
+            case '=':
+                nudgeDiagnosticFrequency(1000);
+                break;
+            case '-':
+            case '_':
+                nudgeDiagnosticFrequency(-1000);
+                break;
+            default:
+                Serial.printf("[SERIAL] unknown command '%c'\n", c);
+                printSerialHelp();
+                break;
+        }
+    }
 }
 
 // =============================================================================
@@ -1251,6 +1391,8 @@ void setup() {
 // =============================================================================
 
 void loop() {
+    handleSerialCommands();
+
     // 1. Input polling
     inputManager.update();
     if (inputManager.hadStrongActivity()) {
