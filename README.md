@@ -79,18 +79,6 @@ To bridge LoRa with Reticulum on your computer:
 
 Note: WiFi bridging methods and interfaces will be revamped with Ratspeak's client release, therefore, it's unlikely AP mode works at all currently.
 
-## Docs
-
-The detailed stuff lives in [`docs/`](docs/):
-
-- **[Quick Start](docs/QUICKSTART.md)** — build, flash, first boot, first message
-- [Building](docs/BUILDING.md) — build flags, flashing, CI, partition table
-- [Architecture](docs/ARCHITECTURE.md) — layer diagram, data flow, design decisions
-- [Development](docs/DEVELOPMENT.md) — adding screens, settings, transports
-- [Hotkeys](docs/HOTKEYS.md) — keyboard shortcuts and navigation
-- [Pin Map](docs/PINMAP.md) — full T-Deck Plus GPIO assignments
-- [Troubleshooting](docs/TROUBLESHOOTING.md) — radio, build, boot, storage
-
 ## License
 
 GNU Affero General Public License v3.0 or later. See [LICENSE](LICENSE).
