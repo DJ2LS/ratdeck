@@ -208,7 +208,7 @@ bool ReticulumManager::begin(SX1262* radio, FlashStore* flash, bool loraEnabled)
     }
 
     if (loraEnabled) {
-        _loraImpl = new LoRaInterface(radio, "LoRa.915");
+        _loraImpl = new LoRaInterface(radio, "LoRa");
         _loraIface = _loraImpl;
         _loraIface.mode(RNS::Type::Interface::MODE_GATEWAY);
         RNS::Transport::register_interface(_loraIface);

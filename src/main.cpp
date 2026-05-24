@@ -140,6 +140,34 @@ bool wifiSTAStarted = false;
 WiFiMulti wifiMulti;
 bool wifiSTAConnected = false;
 unsigned long lastAutoAnnounce = 0;
+bool bootAnnouncePending = false;
+uint8_t bootAnnounceAttempts = 0;
+unsigned long bootAnnounceAt = 0;
+constexpr unsigned long BOOT_ANNOUNCE_DELAY_MS = 5000;
+constexpr uint8_t BOOT_ANNOUNCE_MAX_ATTEMPTS = 3;
+
+static void applyRadioSettingsToHardware(const UserSettings& s, const char* context) {
+    if (!radioOnline) return;
+
+    if (!s.loraEnabled) {
+        radio.sleep();
+        Serial.printf("[%s] LoRa disabled by config\n", context);
+        return;
+    }
+
+    radio.setFrequency(s.loraFrequency);
+    radio.setSpreadingFactor(s.loraSF);
+    radio.setSignalBandwidth(s.loraBW);
+    radio.setCodingRate4(s.loraCR);
+    radio.setTxPower(s.loraTxPower);
+    radio.setPreambleLength(s.loraPreamble);
+    radio.receive();
+    Serial.printf("[%s] Radio: %lu Hz, SF%d, BW%lu, CR4/%d, %d dBm, pre=%ld\n",
+                  context,
+                  (unsigned long)s.loraFrequency, s.loraSF,
+                  (unsigned long)s.loraBW, s.loraCR, s.loraTxPower,
+                  s.loraPreamble);
+}
 
 // STA reconnects are scheduled from WiFi events and fired from loop().
 std::atomic<bool> wifiNeedsReconnect{false};
@@ -230,7 +258,8 @@ RNS::Bytes encodeAnnounceName(const String& name) {
 
 static bool hasUsableAnnounceTransport() {
     if (!rns.isTransportActive()) return false;
-    if (radioOnline) return true;
+    auto* loraIf = rns.loraInterface();
+    if (radioOnline && loraIf && loraIf->isOnline()) return true;
     if (wifiImpl && wifiImpl->isAPActive() && wifiImpl->getClientCount() > 0) return true;
     for (auto* tcp : tcpClients) {
         if (tcp && tcp->isConnected()) return true;
@@ -805,6 +834,8 @@ static void bootRender() {
 // =============================================================================
 
 void setup() {
+    bool flashMounted = false;
+
     // Step 1: Power pin — CRITICAL: enables all T-Deck Plus peripherals
     Power::enablePeripherals();
 
@@ -850,20 +881,26 @@ void setup() {
     pinMode(LORA_CS, OUTPUT); digitalWrite(LORA_CS, HIGH);
     pinMode(SD_CS, OUTPUT);   digitalWrite(SD_CS, HIGH);
 
+    // Mount flash before radio bring-up so persisted RF settings are used from
+    // the first SX1262 init, instead of always booting at the US default first.
+    Serial.println("[BOOT] Mounting flash for early config...");
+    if (flash.begin()) {
+        flashMounted = true;
+        userConfig.load(flash);
+    } else {
+        Serial.println("[BOOT] Early flash mount failed; using default radio config");
+    }
+
     // Step 4: Radio + SD init BEFORE display
     // Radio and SD must init while SPIClass exclusively owns SPI2_HOST.
     // LovyanGFX's init() later joins the bus via spi_bus_add_device().
     // This avoids any bus re-init dance that would invalidate device handles.
     Serial.println("[BOOT] Initializing radio...");
-    if (radio.begin(LORA_DEFAULT_FREQ)) {
-        radio.setSpreadingFactor(LORA_DEFAULT_SF);
-        radio.setSignalBandwidth(LORA_DEFAULT_BW);
-        radio.setCodingRate4(LORA_DEFAULT_CR);
-        radio.setTxPower(LORA_DEFAULT_TX_POWER);
-        radio.setPreambleLength(LORA_DEFAULT_PREAMBLE);
-        radio.receive();
+    if (radio.begin(userConfig.settings().loraFrequency)) {
         radioOnline = true;
-        Serial.println("[RADIO] SX1262 online at 915 MHz");
+        applyRadioSettingsToHardware(userConfig.settings(), "RADIO");
+        Serial.printf("[RADIO] SX1262 online at %lu Hz\n",
+                      (unsigned long)userConfig.settings().loraFrequency);
     } else {
         Serial.println("[RADIO] SX1262 not detected!");
     }
@@ -971,10 +1008,13 @@ void setup() {
     // Step 12: Mount LittleFS
     lvBootScreen.setProgress(0.60f, "Mounting flash...");
     // (LVGL boot renders via lv_timer_handler in setProgress)
-    if (!flash.begin()) {
+    if (flashMounted) {
+        Serial.println("[BOOT] LittleFS already mounted OK");
+    } else if (!flash.begin()) {
         Serial.println("[BOOT] Flash init failed; automatic formatting disabled");
         lvBootScreen.setProgress(0.62f, "Flash mount failed");
     } else {
+        flashMounted = true;
         Serial.println("[BOOT] LittleFS mounted OK");
     }
 
@@ -995,6 +1035,7 @@ void setup() {
     lvBootScreen.setProgress(0.64f, "Loading config...");
     userConfig.load(sdStore, flash);
     inputManager.setTrackballSpeed(userConfig.settings().trackballSpeed);
+    applyRadioSettingsToHardware(userConfig.settings(), "BOOT PRE-RNS");
 
     lvBootScreen.setProgress(0.65f, "Starting Reticulum...");
     // (LVGL boot renders via lv_timer_handler in setProgress)
@@ -1077,17 +1118,7 @@ void setup() {
 
     // Step 21: Apply radio config
     if (radioOnline && userConfig.settings().loraEnabled) {
-        auto& s = userConfig.settings();
-        radio.setFrequency(s.loraFrequency);
-        radio.setSpreadingFactor(s.loraSF);
-        radio.setSignalBandwidth(s.loraBW);
-        radio.setCodingRate4(s.loraCR);
-        radio.setTxPower(s.loraTxPower);
-        radio.setPreambleLength(s.loraPreamble);
-        radio.receive();
-        Serial.printf("[BOOT] Radio: %lu Hz, SF%d, BW%lu, CR4/%d, %d dBm, pre=%ld\n",
-                      (unsigned long)s.loraFrequency, s.loraSF,
-                      (unsigned long)s.loraBW, s.loraCR, s.loraTxPower, s.loraPreamble);
+        applyRadioSettingsToHardware(userConfig.settings(), "BOOT");
         ui.lvStatusBar().setLoRaOnline(true);
     } else if (radioOnline) {
         radio.sleep();
@@ -1482,7 +1513,10 @@ void setup() {
         ui.setBootMode(false);
         ui.setScreen(&lvHomeScreen);
         ui.lvTabBar().setActiveTab(LvTabBar::TAB_HOME);
-        Serial.println("[BOOT] Home ready; first auto announce after configured interval");
+        bootAnnouncePending = true;
+        bootAnnounceAttempts = 0;
+        bootAnnounceAt = millis() + BOOT_ANNOUNCE_DELAY_MS;
+        Serial.println("[BOOT] Home ready; startup announce scheduled");
     };
 
     // Show timezone screen, then go home
@@ -1687,6 +1721,23 @@ void loop() {
     // 4.5 Keep LVGL responsive after heavy RNS processing (announce floods)
     if (rnsDuration > LVGL_INTERVAL_MS && powerMgr.isScreenOn()) {
         lv_timer_handler();
+    }
+
+    if (bootComplete && bootAnnouncePending && (long)(millis() - bootAnnounceAt) >= 0) {
+        bootAnnounceAttempts++;
+        if (announceWithName(true)) {
+            bootAnnouncePending = false;
+            lastAutoAnnounce = millis();
+            Serial.println("[BOOT] Startup announce sent");
+        } else if (bootAnnounceAttempts < BOOT_ANNOUNCE_MAX_ATTEMPTS) {
+            bootAnnounceAt = millis() + BOOT_ANNOUNCE_DELAY_MS;
+            Serial.printf("[BOOT] Startup announce retry scheduled (%u/%u)\n",
+                          (unsigned)bootAnnounceAttempts,
+                          (unsigned)BOOT_ANNOUNCE_MAX_ATTEMPTS);
+        } else {
+            bootAnnouncePending = false;
+            Serial.println("[BOOT] Startup announce skipped after retries");
+        }
     }
 
     // 5. Auto-announce every 30-360 minutes from boot. Manual announces do

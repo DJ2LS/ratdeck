@@ -528,8 +528,9 @@ void LvSettingsScreen::buildItems() {
         regionItem.type = SettingType::ENUM_CHOICE;
         regionItem.getter = [&s]() { return (int)s.radioRegion; };
         regionItem.setter = [this, &s](int v) {
-            s.radioRegion = constrain(v, 0, REGION_COUNT - 1);
-            if (_ui) _ui->lvStatusBar().showToast("Select a preset to apply frequency", 2500);
+            int region = constrain(v, 0, REGION_COUNT - 1);
+            s.radioRegion = region;
+            s.loraFrequency = REGION_FREQ[region];
         };
         regionItem.minVal = 0; regionItem.maxVal = REGION_COUNT - 1; regionItem.step = 1;
         regionItem.enumLabels = {REGION_LABELS[0], REGION_LABELS[1], REGION_LABELS[2], REGION_LABELS[3]};
@@ -2035,13 +2036,17 @@ void LvSettingsScreen::applyAndSave() {
         _power->setKbAutoOff(s.keyboardAutoOff);
     }
     if (_radio && _radio->isRadioOnline()) {
-        _radio->setFrequency(s.loraFrequency);
-        _radio->setTxPower(s.loraTxPower);
-        _radio->setSpreadingFactor(s.loraSF);
-        _radio->setSignalBandwidth(s.loraBW);
-        _radio->setCodingRate4(s.loraCR);
-        _radio->setPreambleLength(s.loraPreamble);
-        _radio->receive();
+        if (s.loraEnabled) {
+            _radio->setFrequency(s.loraFrequency);
+            _radio->setTxPower(s.loraTxPower);
+            _radio->setSpreadingFactor(s.loraSF);
+            _radio->setSignalBandwidth(s.loraBW);
+            _radio->setCodingRate4(s.loraCR);
+            _radio->setPreambleLength(s.loraPreamble);
+            _radio->receive();
+        } else {
+            _radio->sleep();
+        }
     }
     if (_audio) {
         _audio->setEnabled(s.audioEnabled);
