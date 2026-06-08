@@ -2,6 +2,7 @@
 #include "ui/Theme.h"
 #include "ui/LvTheme.h"
 #include "fonts/fonts.h"
+#include "config/Config.h"
 
 namespace {
 
@@ -31,9 +32,12 @@ void LvBootScreen::createUI(lv_obj_t* parent) {
     lv_obj_set_style_bg_opa(parent, LV_OPA_COVER, 0);
     lv_obj_clear_flag(parent, LV_OBJ_FLAG_SCROLLABLE);
 
-    _lblTitle = makeLabel(parent, "RATSPEAK", &lv_font_montserrat_16,
-                          Theme::ACCENT, 240, LV_TEXT_ALIGN_CENTER);
+    _lblTitle = makeLabel(parent, "RATDECK", &lv_font_montserrat_16, Theme::ACCENT, 240, LV_TEXT_ALIGN_CENTER);
     lv_obj_align(_lblTitle, LV_ALIGN_CENTER, 0, -26);
+
+    _lblSub = makeLabel(parent, "by ratspeak.org", &lv_font_ratdeck_10, Theme::TEXT_MUTED, 240, LV_TEXT_ALIGN_CENTER);
+    lv_obj_align(_lblSub, LV_ALIGN_CENTER, 0, -14);
+
 
     _bar = lv_bar_create(parent);
     lv_obj_set_size(_bar, 188, 8);
@@ -42,6 +46,10 @@ void LvBootScreen::createUI(lv_obj_t* parent) {
     lv_bar_set_value(_bar, 0, LV_ANIM_OFF);
     lv_obj_add_style(_bar, LvTheme::styleBar(), LV_PART_MAIN);
     lv_obj_add_style(_bar, LvTheme::styleBarIndicator(), LV_PART_INDICATOR);
+
+    _lblVersion = makeLabel(parent, "v" RATDECK_VERSION_STRING, &lv_font_ratdeck_10, Theme::TEXT_MUTED, 240, LV_TEXT_ALIGN_CENTER);
+    lv_obj_align(_lblVersion, LV_ALIGN_CENTER, 0, 38);
+
 }
 
 void LvBootScreen::setProgress(float progress, const char* status) {
