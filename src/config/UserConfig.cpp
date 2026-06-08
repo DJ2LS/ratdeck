@@ -85,6 +85,9 @@ bool UserConfig::parseJson(const String& json) {
     _settings.touchSensitivity = doc["touch_sens"] | 3;
     _settings.bleEnabled       = false;
 
+    // battery settings
+    _settings.batteryDisplay   = doc["batt_display"] | 0;
+
     _settings.gpsTimeEnabled     = doc["gps_time"]     | true;
     _settings.gpsLocationEnabled = doc["gps_location"] | false;
     _settings.timezoneIdx        = doc["tz_idx"]       | 6;
@@ -156,6 +159,10 @@ String UserConfig::serializeToJson() const {
     doc["trackball_speed"] = _settings.trackballSpeed;
     doc["touch_sens"] = _settings.touchSensitivity;
     doc["ble_enabled"] = false;
+
+    // battery settings
+    doc["batt_display"] = _settings.batteryDisplay;
+
 
     doc["gps_time"]     = _settings.gpsTimeEnabled;
     doc["gps_location"] = _settings.gpsLocationEnabled;

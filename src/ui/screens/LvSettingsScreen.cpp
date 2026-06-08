@@ -514,6 +514,19 @@ void LvSettingsScreen::buildItems() {
             return summary;
         }});
 
+    // Battery
+    int battStart = idx;
+    _items.push_back({"Battery Display", SettingType::ENUM_CHOICE,
+        [&s]() { return (int)s.batteryDisplay; },
+        [&s](int v) { s.batteryDisplay = (uint8_t)v; },
+        nullptr, 0, 1, 1, {"Percent", "Bar"}});
+    idx++;
+    _categories.push_back({"Battery", battStart, idx - battStart,
+        [&s]() -> String {
+            return s.batteryDisplay == 0 ? String("Percent") : String("Bar");
+        }});
+
+
     // LoRa link
     int radioStart = idx;
     _items.push_back({"LoRa Radio", SettingType::TOGGLE,
