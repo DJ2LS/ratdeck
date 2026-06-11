@@ -220,8 +220,8 @@ void td_draw_waterfall() {
   if (!radio_online) {
     td_canvas->setTextSize(1);
     td_canvas->setTextColor(TD_CLR_TEXT_DIM);
-    td_canvas->setCursor(TD_WF_X + 18, TD_WF_Y + TD_WF_H / 2);
-    td_canvas->print("radio off");
+    td_canvas->setCursor(TD_WF_X + 16, TD_WF_Y + TD_WF_H / 2);
+    td_canvas->print("radio idle");
     return;
   }
 

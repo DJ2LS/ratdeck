@@ -1598,9 +1598,9 @@ void validate_status() {
           
           if (hw_ready && eeprom_have_conf()) {
             eeprom_conf_load();
-            #if BOARD_MODEL == BOARD_CARDPUTER_ADV
-              // Keep the Cardputer Adv RF side idle until a USB/BLE host
-              // explicitly starts the radio with the normal KISS command.
+            #if BOARD_MODEL == BOARD_CARDPUTER_ADV || BOARD_MODEL == BOARD_TDECK
+              // Keep the RF side idle until a USB/BLE host explicitly
+              // starts the radio with the normal KISS command.
               op_mode = MODE_HOST;
             #else
               op_mode = MODE_TNC;
