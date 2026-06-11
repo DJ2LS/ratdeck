@@ -8,6 +8,10 @@
 #define TDECK_UI_H
 
 void display_unblank();
+void bt_enable_pairing();
+void bt_disable_pairing();
+extern uint32_t bt_pairing_started;
+#define TD_PAIRING_WINDOW_MS 30000
 
 // Ratspeak-style dark palette (RGB565)
 #define TD_CLR_BG            0x0041
@@ -50,7 +54,15 @@ uint8_t td_charge_tick = 0;
 #define TD_TOUCH_SCL 8
 uint8_t td_touch_addr = 0;
 bool td_touch_down = false;
+int16_t td_touch_x = 0;
+int16_t td_touch_y = 0;
 uint32_t td_last_touch_poll = 0;
+
+// Calibrated GT911 raw bounds, identical to the standalone firmware HAL.
+#define TD_TOUCH_X_MIN 10
+#define TD_TOUCH_Y_MIN 8
+#define TD_TOUCH_X_MAX 313
+#define TD_TOUCH_Y_MAX 243
 
 void td_touch_init() {
   Wire.begin(TD_TOUCH_SDA, TD_TOUCH_SCL, 400000);
@@ -60,39 +72,83 @@ void td_touch_init() {
   if (Wire.endTransmission() == 0) { td_touch_addr = 0x14; }
 }
 
-bool td_touch_read_down() {
-  if (td_touch_addr == 0) return false;
-  Wire.beginTransmission(td_touch_addr);
-  Wire.write(0x81); Wire.write(0x4E);
-  if (Wire.endTransmission(false) != 0) return false;
-  Wire.requestFrom(td_touch_addr, (uint8_t)1);
-  if (!Wire.available()) return false;
-  uint8_t status = Wire.read();
-  if (!(status & 0x80)) return false;
-  // Clear the buffer-ready flag so the controller keeps updating
+void td_touch_clear_flag() {
   Wire.beginTransmission(td_touch_addr);
   Wire.write(0x81); Wire.write(0x4E); Wire.write(0x00);
   Wire.endTransmission();
-  return (status & 0x0F) > 0;
+}
+
+bool td_touch_read(int16_t* out_x, int16_t* out_y) {
+  if (td_touch_addr == 0) return false;
+  Wire.beginTransmission(td_touch_addr);
+  Wire.write(0x81); Wire.write(0x4E);
+  if (Wire.endTransmission() != 0) return false;
+  Wire.requestFrom(td_touch_addr, (uint8_t)1);
+  if (!Wire.available()) return false;
+  uint8_t status = Wire.read();
+  uint8_t count = status & 0x0F;
+  if (!(status & 0x80) || count == 0) {
+    if (status & 0x80) td_touch_clear_flag();
+    return false;
+  }
+
+  Wire.beginTransmission(td_touch_addr);
+  Wire.write(0x81); Wire.write(0x4F);
+  if (Wire.endTransmission() != 0) { td_touch_clear_flag(); return false; }
+  Wire.requestFrom(td_touch_addr, (uint8_t)5);
+  if (Wire.available() < 5) { td_touch_clear_flag(); return false; }
+  Wire.read(); // track id
+  int16_t ry = Wire.read() | (Wire.read() << 8);
+  int16_t rx = Wire.read() | (Wire.read() << 8);
+  td_touch_clear_flag();
+
+  ry = TD_H - 1 - ry;
+  rx = (rx - TD_TOUCH_X_MIN) * (TD_W - 1) / (TD_TOUCH_X_MAX - TD_TOUCH_X_MIN);
+  ry = (ry - TD_TOUCH_Y_MIN) * (TD_H - 1) / (TD_TOUCH_Y_MAX - TD_TOUCH_Y_MIN);
+  if (rx < 0) rx = 0;
+  if (rx >= TD_W) rx = TD_W - 1;
+  if (ry < 0) ry = 0;
+  if (ry >= TD_H) ry = TD_H - 1;
+  *out_x = rx;
+  *out_y = ry;
+  return true;
+}
+
+bool td_pair_button_visible() {
+  return !radio_online && bt_state != BT_STATE_CONNECTED && bt_state != BT_STATE_PAIRING;
 }
 
 void td_poll_touch() {
   if (millis() - td_last_touch_poll < 50) return;
   td_last_touch_poll = millis();
 
-  bool down = td_touch_read_down();
-  if (down && !td_touch_down) {
+  int16_t x, y;
+  bool down = td_touch_read(&x, &y);
+  if (down) {
     td_touch_down = true;
-  } else if (!down && td_touch_down) {
-    td_touch_down = false;
-    // Tap released: toggle display power
-    if (display_blanked) {
-      display_unblank();
-    } else {
-      last_unblank_event = millis() - display_blanking_timeout - 1;
-    }
-    last_disp_update = 0;
+    td_touch_x = x;
+    td_touch_y = y;
+    return;
   }
+  if (!td_touch_down) return;
+  td_touch_down = false;
+
+  // Tap released
+  if (display_blanked) {
+    display_unblank();
+    last_disp_update = 0;
+    return;
+  }
+
+  bool in_panel = td_touch_x >= (TD_WF_X - 6) && td_touch_y >= TD_BAR_H && td_touch_y < TD_FOOT_Y;
+  if (in_panel && td_pair_button_visible()) {
+    bt_enable_pairing();           // 30s window, auto-disarms via BT_PAIRING_TIMEOUT
+  } else if (in_panel && bt_state == BT_STATE_PAIRING) {
+    bt_disable_pairing();          // tap again to cancel
+  } else {
+    last_unblank_event = millis() - display_blanking_timeout - 1;  // screen off
+  }
+  last_disp_update = 0;
 }
 
 void td_ui_init() {
@@ -206,11 +262,62 @@ void td_draw_statusbar() {
 
   td_canvas->setTextSize(2);
   td_canvas->setTextColor(TD_CLR_TEXT_PRIMARY);
-  td_canvas->setCursor(106, 5);
-  td_canvas->print("rsDeck RNode");
+  td_canvas->setCursor(118, 5);
+  td_canvas->print("Ratspeak");
 
   td_draw_battery(264, 7);
   td_canvas->drawFastHLine(0, TD_BAR_H, TD_W, TD_CLR_BORDER);
+}
+
+void td_draw_pair_panel() {
+  int cx = TD_WF_X + (TD_WF_W / 2);
+
+  if (bt_state == BT_STATE_PAIRING) {
+    uint32_t elapsed = millis() - bt_pairing_started;
+    uint32_t remain_s = 0;
+    if (elapsed < TD_PAIRING_WINDOW_MS) {
+      remain_s = (TD_PAIRING_WINDOW_MS - elapsed + 999) / 1000;
+    }
+    td_canvas->setTextSize(1);
+    td_canvas->setTextColor(TD_CLR_WARN);
+    td_canvas->setCursor(cx - 23, TD_WF_Y + 56);
+    td_canvas->print("PAIRING");
+    char rbuf[4];
+    snprintf(rbuf, sizeof(rbuf), "%lu", (unsigned long)remain_s);
+    td_canvas->setTextSize(4);
+    td_canvas->setTextColor(TD_CLR_TEXT_PRIMARY);
+    td_canvas->setCursor(remain_s >= 10 ? cx - 23 : cx - 11, TD_WF_Y + 76);
+    td_canvas->print(rbuf);
+    td_canvas->setTextSize(1);
+    td_canvas->setTextColor(TD_CLR_TEXT_DIM);
+    td_canvas->setCursor(cx - 39, TD_WF_Y + 118);
+    td_canvas->print("tap to cancel");
+    return;
+  }
+
+  if (bt_state == BT_STATE_CONNECTED) {
+    td_canvas->setTextSize(1);
+    td_canvas->setTextColor(TD_CLR_GREEN);
+    td_canvas->setCursor(cx - 39, TD_WF_Y + 80);
+    td_canvas->print("BLE connected");
+    td_canvas->setTextColor(TD_CLR_TEXT_DIM);
+    td_canvas->setCursor(cx - 47, TD_WF_Y + 96);
+    td_canvas->print("waiting for host");
+    return;
+  }
+
+  // Idle: pairing button
+  int bw = 98; int bh = 48;
+  int bx = TD_WF_X + (TD_WF_W - bw) / 2;
+  int by = TD_WF_Y + 72;
+  td_canvas->fillRoundRect(bx, by, bw, bh, 8, TD_CLR_BG_PANEL);
+  td_canvas->drawRoundRect(bx, by, bw, bh, 8, TD_CLR_ACCENT);
+  td_canvas->setTextSize(1);
+  td_canvas->setTextColor(TD_CLR_ACCENT);
+  td_canvas->setCursor(bx + 25, by + 14);
+  td_canvas->print("Pair via");
+  td_canvas->setCursor(bx + 40, by + 28);
+  td_canvas->print("BLE");
 }
 
 void td_draw_waterfall() {
@@ -218,10 +325,7 @@ void td_draw_waterfall() {
   td_canvas->drawFastVLine(TD_WF_X - 2, TD_WF_Y, TD_WF_H, TD_CLR_BORDER);
 
   if (!radio_online) {
-    td_canvas->setTextSize(1);
-    td_canvas->setTextColor(TD_CLR_TEXT_DIM);
-    td_canvas->setCursor(TD_WF_X + 16, TD_WF_Y + TD_WF_H / 2);
-    td_canvas->print("radio idle");
+    td_draw_pair_panel();
     return;
   }
 
@@ -310,12 +414,9 @@ void td_draw_idle_content() {
   if (radio_online) {
     td_canvas->setTextColor(TD_CLR_GREEN);
     td_canvas->print("Radio Online");
-  } else if (!device_signatures_ok()) {
-    td_canvas->setTextColor(TD_CLR_TEXT_SECONDARY);
-    td_canvas->print("Provisioned, host config pending");
   } else {
-    td_canvas->setTextColor(TD_CLR_TEXT_DIM);
-    td_canvas->print("Waiting for host");
+    td_canvas->setTextColor(TD_CLR_TEXT_SECONDARY);
+    td_canvas->print("Ready to connect.");
   }
   y += 16;
 
@@ -463,8 +564,8 @@ void td_draw_footer() {
   char vbuf[20];
   snprintf(vbuf, sizeof(vbuf), "Firmware v%d.%02d", MAJ_VERS, MIN_VERS);
   td_canvas->print(vbuf);
-  td_canvas->setCursor(170, TD_FOOT_Y + 4);
-  td_canvas->print("click: pair   touch: screen");
+  td_canvas->setCursor(188, TD_FOOT_Y + 4);
+  td_canvas->print("touch: pair / screen off");
 }
 
 void td_render_frame() {
