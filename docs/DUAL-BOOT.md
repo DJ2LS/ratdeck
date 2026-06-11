@@ -33,8 +33,9 @@ Trackball up/down + click, or keys: `W`/`S` select, `Enter` boot,
 
 The vendored RNode firmware (`vendor/rnode_firmware`, `make firmware-tdeck`)
 self-provisions EEPROM on first boot (PRODUCT_TDECK_V1 / MODEL_D9, 915 MHz
-defaults) and enables BLE pairing on first run when no bonds exist. The T-Deck
-RNode build is headless — the screen stays off; reset to return to the
+defaults) and enables BLE pairing on first run when no bonds exist. The display
+shows the standard RNode UI (node address, waterfall, status) and the BLE
+pairing PIN during pairing; it blanks after 15s idle. Reset to return to the
 launcher.
 
 ## Build
