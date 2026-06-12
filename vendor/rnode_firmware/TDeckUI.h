@@ -133,7 +133,8 @@ void td_poll_touch() {
   if (!td_touch_down) return;
   td_touch_down = false;
 
-  // Tap released
+  // Tap released. Taps only wake or interact — the screen sleeps on the
+  // inactivity timeout alone, never from a tap.
   if (display_blanked) {
     display_unblank();
     last_disp_update = 0;
@@ -146,9 +147,25 @@ void td_poll_touch() {
   } else if (in_panel && bt_state == BT_STATE_PAIRING) {
     bt_disable_pairing();          // tap again to cancel
   } else {
-    last_unblank_event = millis() - display_blanking_timeout - 1;  // screen off
+    display_unblank();             // count as activity, extend the timeout
   }
   last_disp_update = 0;
+}
+
+// T-Deck keyboard (ESP32-C3 @ I2C 0x55, single translated byte per read).
+// Any keypress wakes the display / extends the inactivity timeout.
+#define TD_KB_ADDR 0x55
+uint32_t td_last_kb_poll = 0;
+
+void td_poll_keyboard() {
+  if (millis() - td_last_kb_poll < 50) return;
+  td_last_kb_poll = millis();
+
+  Wire.requestFrom((uint8_t)TD_KB_ADDR, (uint8_t)1);
+  if (Wire.available() && Wire.read() != 0) {
+    display_unblank();
+    last_disp_update = 0;
+  }
 }
 
 void td_ui_init() {
@@ -404,10 +421,12 @@ void td_draw_idle_content() {
   td_canvas->print(modbuf);
   y += 12;
 
-  char brbuf[24];
-  snprintf(brbuf, sizeof(brbuf), "%.2f Kbps", (float)lora_bitrate / 1000.0f);
-  td_canvas->setCursor(x, y);
-  td_canvas->print(brbuf);
+  if (radio_online) {
+    char brbuf[24];
+    snprintf(brbuf, sizeof(brbuf), "%.2f Kbps", (float)lora_bitrate / 1000.0f);
+    td_canvas->setCursor(x, y);
+    td_canvas->print(brbuf);
+  }
   y += 14;
 
   td_canvas->setCursor(x, y);
@@ -565,8 +584,6 @@ void td_draw_footer() {
   char vbuf[20];
   snprintf(vbuf, sizeof(vbuf), "Firmware v%d.%02d", MAJ_VERS, MIN_VERS);
   td_canvas->print(vbuf);
-  td_canvas->setCursor(188, TD_FOOT_Y + 4);
-  td_canvas->print("touch: pair / screen off");
 }
 
 void td_render_frame() {

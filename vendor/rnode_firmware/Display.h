@@ -194,6 +194,8 @@ float epd_update_fps  = 0.5;
 #if BOARD_MODEL == BOARD_CARDPUTER_ADV
   #define DISPLAY_BLANKING_TIMEOUT 30*1000
   #define CARDPUTER_ADV_DISPLAY_INTENSITY_DEFAULT 96
+#elif BOARD_MODEL == BOARD_TDECK
+  #define DISPLAY_BLANKING_TIMEOUT 60*1000
 #else
   #define DISPLAY_BLANKING_TIMEOUT 15*1000
 #endif
@@ -1768,7 +1770,10 @@ bool epd_blanked = false;
 void update_display(bool blank = false) {
   display_updating = true;
   #if BOARD_MODEL == BOARD_TDECK
-    if (td_ui_ready) td_poll_touch();
+    if (td_ui_ready) {
+      td_poll_touch();
+      td_poll_keyboard();
+    }
   #endif
   if (blank == true) {
     last_disp_update = millis()-disp_update_interval-1;
