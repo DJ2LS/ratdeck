@@ -463,6 +463,40 @@ void LvSettingsScreen::buildItems() {
         _items.push_back(newId);
         idx++;
     }
+    if (_sd && _sd->isReady()) {
+        SettingItem importId;
+        importId.label = "Import Identity";
+        importId.type = SettingType::ACTION;
+        importId.formatter = [](int) { return String("[Enter]"); };
+        importId.action = [this, &s]() {
+            if (!_sd || !_sd->isReady()) {
+                if (_ui) _ui->lvStatusBar().showToast("No SD card", 1200);
+                return;
+            }
+            if (!_sd->exists(SD_PATH_IMPORT_ID)) {
+                if (_ui) _ui->lvStatusBar().showToast("Missing import.key", 1200);
+                return;
+            }
+            if (!_idMgr) {
+                if (_ui) _ui->lvStatusBar().showToast("Not available", 1200);
+                return;
+            }
+            if (_idMgr->count() >= 8) {
+                if (_ui) _ui->lvStatusBar().showToast("Identity slots full", 1200);
+                return;
+            }
+            int idx = _idMgr->importIdentity(s.displayName);
+            if (idx >= 0) {
+                if (_ui) _ui->lvStatusBar().showToast("Identity imported", 1200);
+                buildItems();
+                rebuildCategoryList();
+            } else if (_ui) {
+                _ui->lvStatusBar().showToast("Identity import failed", 1200);
+            }
+        };
+        _items.push_back(importId);
+        idx++;
+    }
     _items.push_back({"Auto Announce", SettingType::INTEGER,
         [&s]() { return s.announceInterval; }, [&s](int v) { s.announceInterval = v; },
         [](int v) { return String(v) + "m"; }, 30, 60 * 6, 5}); // 30m - 6h

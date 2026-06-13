@@ -64,6 +64,44 @@ String IdentityManager::slotKeyPath(int slotNum) const {
     return String(path);
 }
 
+int IdentityManager::importIdentity(const String& displayName) {
+    (void)displayName;
+    if (!_sd || !_sd->isReady()) return -1;
+    if ((int)_slots.size() >= MAX_IDENTITIES) return -1;
+
+    uint8_t buffer[64];
+    size_t bytesRead = 0;
+    if (!_sd->readFile(SD_PATH_IMPORT_ID, buffer, sizeof(buffer), bytesRead) || bytesRead != sizeof(buffer)) {
+        Serial.println("[IDMGR] Failed to read 64-byte import identity from SD");
+        return -1;
+    }
+
+    RNS::Bytes privKey(buffer, sizeof(buffer));
+    RNS::Identity imported(false);
+    if (!imported.load_private_key(privKey)) {
+        Serial.println("[IDMGR] Import identity key failed validation");
+        return -1;
+    }
+
+    int slotNum = (int)_slots.size();
+    String keyPath = slotKeyPath(slotNum);
+    if (!_flash->writeAtomic(keyPath.c_str(), privKey.data(), privKey.size())) {
+        Serial.println("[IDMGR] Failed to save imported identity key");
+        return -1;
+    }
+
+    IdentitySlot slot;
+    slot.hash = imported.hexhash();
+    slot.displayName = "";
+    slot.keyPath = keyPath;
+    slot.active = false;
+    _slots.push_back(slot);
+
+    saveSlotMeta();
+    Serial.printf("[IDMGR] Imported identity %d: %s\n", slotNum, slot.hash.substr(0, 16).c_str());
+    return slotNum;
+}
+
 int IdentityManager::createIdentity(const String& displayName) {
     if ((int)_slots.size() >= MAX_IDENTITIES) return -1;
 
