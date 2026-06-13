@@ -18,6 +18,10 @@
 #ifndef BOARDS_H
   #define BOARDS_H
 
+  #ifndef RNODE_TDECK_DIAG
+    #define RNODE_TDECK_DIAG 0
+  #endif
+
   #define PLATFORM_AVR        0x90
   #define PLATFORM_ESP32      0x80
   #define PLATFORM_NRF52      0x70
@@ -574,6 +578,7 @@
       #define DIO2_AS_RF_SWITCH true
       #define HAS_BUSY true
       #define HAS_TCXO true
+      #define OCP_TUNED 0x38
 
       // Display on for the rsDeck dual-boot build: node ID, waterfall, BLE pairing PIN.
       #define HAS_DISPLAY true

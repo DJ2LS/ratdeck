@@ -164,6 +164,9 @@ sx126x::sx126x() :
   _fifo_rx_addr_ptr(0),
   _packet({0}),
   _preinit_done(false),
+  #if BOARD_MODEL == BOARD_TDECK
+    _irq_pending(false),
+  #endif
   _onReceive(NULL)
 { setTimeout(0); }
 
@@ -308,6 +311,12 @@ void sx126x::readBuffer(uint8_t* buffer, size_t size) {
 }
 
 void sx126x::setModulationParams(uint8_t sf, uint8_t bw, uint8_t cr, int ldro) {
+  // SX1262 only accepts SetModulationParams from standby. During host
+  // reconnects, RNode may already be in continuous RX when the host reapplies
+  // a radio preset; issuing this opcode from RX is silently ignored.
+  standby();
+  if (!loraMode()) { return; }
+
   // Because there is no access to these registers on the sx1262, we have
   // to set all these parameters at once or not at all.
   uint8_t buf[8];
@@ -323,6 +332,12 @@ void sx126x::setModulationParams(uint8_t sf, uint8_t bw, uint8_t cr, int ldro) {
 }
 
 void sx126x::setPacketParams(long preamble_symbols, uint8_t headermode, uint8_t payload_length, uint8_t crc) {
+  // SetPacketParams has the same standby-mode requirement as modulation
+  // parameters. Keep this in the low-level driver so callers cannot leave the
+  // modem in a stale packet format after live reconfiguration.
+  standby();
+  if (!loraMode()) { return; }
+
   // Because there is no access to these registers on the sx1262, we have
   // to set all these parameters at once or not at all.
   uint8_t buf[9];
@@ -359,7 +374,11 @@ void sx126x::reset(void) {
     digitalWrite(_reset, LOW);
     delay(10);
     digitalWrite(_reset, HIGH);
-    delay(10);
+    #if BOARD_MODEL == BOARD_TDECK
+      delay(100);
+    #else
+      delay(10);
+    #endif
   }
 }
 
@@ -406,6 +425,10 @@ int sx126x::begin(long frequency) {
     // M5's Cap LoRa-1262 reference path uses LDO regulator mode.
     uint8_t reg_mode = 0x00;
     executeOpcode(OP_REGULATOR_MODE_6X, &reg_mode, 1);
+  #elif BOARD_MODEL == BOARD_TDECK
+    // LilyGo's integrated SX1262 path is stable in DC-DC regulator mode.
+    uint8_t reg_mode = 0x01;
+    executeOpcode(OP_REGULATOR_MODE_6X, &reg_mode, 1);
   #endif
 
   calibrate();
@@ -434,7 +457,7 @@ int sx126x::begin(long frequency) {
   setPacketParams(_preambleLength, _implicitHeaderMode, _payloadLength, _crcMode);
   enableDio2RfSwitch();
 
-  #if BOARD_MODEL == BOARD_CARDPUTER_ADV
+  #if BOARD_MODEL == BOARD_CARDPUTER_ADV || BOARD_MODEL == BOARD_TDECK
     // Keep the TCXO-backed oscillator as the fallback between TX/RX transitions.
     uint8_t fallback = MODE_FALLBACK_STDBY_XOSC_6X;
     executeOpcode(OP_RX_TX_FALLBACK_MODE_6X, &fallback, 1);
@@ -730,7 +753,7 @@ void sx126x::onReceive(void(*callback)(int)){
 }
 
 void sx126x::receive(int size) {
-  #if BOARD_MODEL == BOARD_CARDPUTER_ADV
+  #if BOARD_MODEL == BOARD_CARDPUTER_ADV || BOARD_MODEL == BOARD_TDECK
     uint8_t clear[2] = {0xFF, 0xFF};
     executeOpcode(OP_CLEAR_IRQ_STATUS_6X, clear, 2);
   #endif
@@ -775,7 +798,7 @@ void sx126x::enableTCXO() {
     #elif BOARD_MODEL == BOARD_TBEAM
       uint8_t buf[4] = {MODE_TCXO_1_8V_6X, 0x00, 0x00, 0xFF};
     #elif BOARD_MODEL == BOARD_TDECK
-      uint8_t buf[4] = {MODE_TCXO_1_8V_6X, 0x00, 0x00, 0xFF};
+      uint8_t buf[4] = {MODE_TCXO_1_8V_6X, 0x00, 0xA0, 0x00};
     #elif BOARD_MODEL == BOARD_TBEAM_S_V1
       uint8_t buf[4] = {MODE_TCXO_1_8V_6X, 0x00, 0x00, 0xFF};
     #elif BOARD_MODEL == BOARD_T3S3
@@ -825,6 +848,8 @@ void sx126x::setTxPower(int level, int outputPin) {
 uint8_t sx126x::getTxPower() { return _txp; }
 
 void sx126x::setFrequency(long frequency) {
+  standby();
+  calibrate_image(frequency);
   _frequency = frequency;
   uint8_t buf[4];
   uint32_t freq = (uint32_t)((double)frequency / (double)FREQ_STEP_6X);
@@ -954,11 +979,39 @@ void ISR_VECT sx126x::handleDio0Rise() {
     uint8_t rxbuf[2] = {0}; // Read packet length
     executeOpcodeRead(OP_RX_BUFFER_STATUS_6X, rxbuf, 2);
     int packetLength = rxbuf[0];
+    #if BOARD_MODEL == BOARD_TDECK && RNODE_TDECK_DIAG
+      Serial.printf("[RNODE] sx1262 irq=0x%02X%02X len=%d\r\n", buf[0], buf[1], packetLength);
+    #endif
     if (_onReceive) { _onReceive(packetLength); }
+  } else {
+    #if BOARD_MODEL == BOARD_TDECK && RNODE_TDECK_DIAG
+      Serial.printf("[RNODE] sx1262 irq=0x%02X%02X crc_error\r\n", buf[0], buf[1]);
+    #endif
   }
 }
 
+#if BOARD_MODEL == BOARD_TDECK
+void sx126x::serviceInterrupt() {
+  bool pending = false;
+  noInterrupts();
+  if (_irq_pending) {
+    _irq_pending = false;
+    pending = true;
+  }
+  interrupts();
+
+  if (pending) {
+    #if RNODE_TDECK_DIAG
+    Serial.println("[RNODE] sx1262 irq pending");
+    #endif
+    handleDio0Rise();
+  }
+}
+
+void ISR_VECT sx126x::onDio0Rise() { sx126x_modem._irq_pending = true; }
+#else
 void ISR_VECT sx126x::onDio0Rise() { sx126x_modem.handleDio0Rise(); }
+#endif
 void sx126x::setSPIFrequency(uint32_t frequency) { _spiSettings = SPISettings(frequency, MSBFIRST, SPI_MODE0); }
 void sx126x::enableCrc() { _crcMode = 1; setPacketParams(_preambleLength, _implicitHeaderMode, _payloadLength, _crcMode); }
 void sx126x::disableCrc() { _crcMode = 0; setPacketParams(_preambleLength, _implicitHeaderMode, _payloadLength, _crcMode); }

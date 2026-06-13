@@ -265,6 +265,8 @@ void setup() {
         eeprom_update(eeprom_addr(ADDR_CONF_DINT), 0x03);
       #elif BOARD_MODEL == BOARD_CARDPUTER_ADV
         eeprom_update(eeprom_addr(ADDR_CONF_DINT), CARDPUTER_ADV_DISPLAY_INTENSITY_DEFAULT);
+      #elif BOARD_MODEL == BOARD_TDECK
+        eeprom_update(eeprom_addr(ADDR_CONF_DINT), TDECK_DISPLAY_INTENSITY_DEFAULT);
       #else
         eeprom_update(eeprom_addr(ADDR_CONF_DINT), 0xFF);
       #endif
@@ -291,7 +293,7 @@ void setup() {
     #if HAS_BLUETOOTH || HAS_BLE == true
       bt_init();
       bt_init_ran = true;
-      #if (BOARD_MODEL == BOARD_CARDPUTER_ADV || BOARD_MODEL == BOARD_TDECK) && HAS_BLE == true
+      #if BOARD_MODEL == BOARD_CARDPUTER_ADV && HAS_BLE == true
         if (!console_active && bt_ready && bt_enabled && bt_state != BT_STATE_OFF && bt_bond_count() == 0) {
           bt_enable_pairing_on_request();
         }
@@ -394,6 +396,10 @@ inline void getPacketData(uint16_t len) {
 void ISR_VECT receive_callback(int packet_size) {
   #if MCU_VARIANT == MCU_ESP32 || MCU_VARIANT == MCU_NRF52
     BaseType_t int_mask;
+  #endif
+
+  #if BOARD_MODEL == BOARD_TDECK && RNODE_TDECK_DIAG
+    Serial.printf("[RNODE] rx callback packet_size=%d promisc=%d\r\n", packet_size, promisc);
   #endif
 
   if (!promisc) {
@@ -510,9 +516,22 @@ void ISR_VECT receive_callback(int packet_size) {
         // unable to receive the packet.
         modem_packet->len = read_len;
         memcpy(modem_packet->data, pbuf, read_len); read_len = 0;
+        #if BOARD_MODEL == BOARD_TDECK
+        if (!modem_packet_queue || xQueueSend(modem_packet_queue, &modem_packet, 0) != pdPASS) {
+            #if RNODE_TDECK_DIAG
+            Serial.println("[RNODE] rx queue failed");
+            #endif
+            free(modem_packet);
+        } else {
+            #if RNODE_TDECK_DIAG
+            Serial.printf("[RNODE] rx queued len=%u rssi=%d snr_raw=%u\r\n", modem_packet->len, modem_packet->rssi, modem_packet->snr_raw);
+            #endif
+        }
+        #else
         if (!modem_packet_queue || xQueueSendFromISR(modem_packet_queue, &modem_packet, NULL) != pdPASS) {
             free(modem_packet);
         }
+        #endif
       #endif
     }  
   } else {
@@ -544,6 +563,9 @@ bool startRadio() {
   update_radio_lock();
   if (!radio_online && !console_active) {
     if (!radio_locked && hw_ready) {
+      #if BOARD_MODEL == BOARD_TDECK && RNODE_TDECK_DIAG
+        Serial.printf("[RNODE] startRadio freq=%ld bw=%ld sf=%d cr=%d txp=%d\r\n", lora_freq, lora_bw, lora_sf, lora_cr, lora_txp);
+      #endif
       if (!LoRa->begin(lora_freq)) {
         // The radio could not be started.
         // Indicate this failure over both the
@@ -551,6 +573,9 @@ bool startRadio() {
         radio_error = true;
         kiss_indicate_error(ERROR_INITRADIO);
         led_indicate_error(0);
+        #if BOARD_MODEL == BOARD_TDECK && RNODE_TDECK_DIAG
+          Serial.println("[RNODE] startRadio failed");
+        #endif
         return false;
       } else {
         radio_online = true;
@@ -571,6 +596,9 @@ bool startRadio() {
         // that the radio is now on
         kiss_indicate_radiostate();
         led_indicate_info(3);
+        #if BOARD_MODEL == BOARD_TDECK && RNODE_TDECK_DIAG
+          Serial.println("[RNODE] startRadio ok");
+        #endif
         return true;
       }
 
@@ -584,8 +612,10 @@ bool startRadio() {
       return false;
     }
   } else {
-    // If radio is already on, we silently
-    // ignore the request.
+    // If radio is already on, re-arm receive. Host reconnects normally replay
+    // radio parameters before RADIO_STATE=ON; SX1262 reconfiguration uses
+    // standby, so the final ON command must put the modem back in RX.
+    if (radio_online && !console_active) { lora_receive(); }
     kiss_indicate_radiostate();
     return true;
   }
@@ -600,8 +630,11 @@ void handleModemTimeout() {
   kiss_indicate_error(ERROR_MODEM_TIMEOUT);
   kiss_indicate_error(ERROR_TXFAILED);
   led_indicate_error(5);
+  #if BOARD_MODEL == BOARD_TDECK && RNODE_TDECK_DIAG
+    Serial.println("[RNODE] modem timeout; restarting radio");
+  #endif
 
-  #if BOARD_MODEL == BOARD_CARDPUTER_ADV
+  #if BOARD_MODEL == BOARD_CARDPUTER_ADV || BOARD_MODEL == BOARD_TDECK
     stopRadio();
     delay(50);
     startRadio();
@@ -625,6 +658,9 @@ void flush_queue(void) {
   if (!queue_flushing) {
     queue_flushing = true;
     led_tx_on();
+    #if BOARD_MODEL == BOARD_TDECK && RNODE_TDECK_DIAG
+      Serial.printf("[RNODE] flush_queue height=%u bytes=%u\r\n", queue_height, queued_bytes);
+    #endif
 
     #if MCU_VARIANT == MCU_ESP32 || MCU_VARIANT == MCU_NRF52
     while (!fifo16_isempty(&packet_starts)) {
@@ -665,6 +701,9 @@ void flush_queue(void) {
 void pop_queue() {
   if (!queue_flushing) {
     queue_flushing = true; led_tx_on();
+    #if BOARD_MODEL == BOARD_TDECK && RNODE_TDECK_DIAG
+      Serial.printf("[RNODE] pop_queue height=%u bytes=%u\r\n", queue_height, queued_bytes);
+    #endif
 
     #if MCU_VARIANT == MCU_ESP32 || MCU_VARIANT == MCU_NRF52
     if (!fifo16_isempty(&packet_starts)) {
@@ -764,6 +803,9 @@ void update_airtime() {
 
 void transmit(uint16_t size) {
   if (radio_online) {
+    #if BOARD_MODEL == BOARD_TDECK && RNODE_TDECK_DIAG
+      Serial.printf("[RNODE] tx begin size=%u promisc=%d\r\n", size, promisc);
+    #endif
     if (!promisc) {
       uint16_t  written = 0;
       uint8_t header  = random(256) & 0xF0;
@@ -794,6 +836,9 @@ void transmit(uint16_t size) {
       }
 
       add_airtime(written);
+      #if BOARD_MODEL == BOARD_TDECK && RNODE_TDECK_DIAG
+        Serial.printf("[RNODE] tx ok written=%u\r\n", written);
+      #endif
 
     } else {
       led_tx_on(); uint16_t written = 0;
@@ -824,6 +869,9 @@ void serial_callback(uint8_t sbyte) {
             fifo16_push(&packet_starts, s);
             fifo16_push(&packet_lengths, l);
             current_packet_start = queue_cursor;
+            #if BOARD_MODEL == BOARD_TDECK && RNODE_TDECK_DIAG
+              Serial.printf("[RNODE] queued tx len=%u height=%u bytes=%u\r\n", l, queue_height, queued_bytes);
+            #endif
         }
     }
 
@@ -1391,9 +1439,12 @@ void serial_callback(uint8_t sbyte) {
   portMUX_TYPE update_lock = portMUX_INITIALIZER_UNLOCKED;
 #endif
 
+extern bool noise_floor_sampled;
+
 bool medium_free() {
   update_modem_status();
-  if (avoid_interference && interference_detected) { return false; }
+  update_noise_floor();
+  if (avoid_interference && noise_floor_sampled && interference_detected) { return false; }
   return !dcd;
 }
 
@@ -1454,10 +1505,11 @@ void update_modem_status() {
   #endif
 
   #if BOARD_MODEL == BOARD_HELTEC32_V4
-    if (noise_floor > LNA_GD_THRSHLD)  { interference_detected = !carrier_detected && (current_rssi > (noise_floor+CSMA_INFR_THRESHOLD_DB)); }
-    else                               { interference_detected = !carrier_detected && (current_rssi > LNA_GD_LIMIT); }
+    if (!noise_floor_sampled)           { interference_detected = false; }
+    else if (noise_floor > LNA_GD_THRSHLD) { interference_detected = !carrier_detected && (current_rssi > (noise_floor+CSMA_INFR_THRESHOLD_DB)); }
+    else                                { interference_detected = !carrier_detected && (current_rssi > LNA_GD_LIMIT); }
   #else
-    interference_detected = !carrier_detected && (current_rssi > (noise_floor+CSMA_INFR_THRESHOLD_DB));
+    interference_detected = noise_floor_sampled && !carrier_detected && (current_rssi > (noise_floor+CSMA_INFR_THRESHOLD_DB));
   #endif
 
   if (interference_detected) { if (led_id_filter < LED_ID_TRIG) { led_id_filter += 1; } }
@@ -1673,6 +1725,15 @@ void validate_status() {
 
 void tx_queue_handler() {
   if (!airtime_lock && queue_height > 0) {
+    #if BOARD_MODEL == BOARD_TDECK && RNODE_TDECK_DIAG
+      static unsigned long last_txq_diag = 0;
+      if (millis() - last_txq_diag > 500) {
+        last_txq_diag = millis();
+        Serial.printf("[RNODE] txq height=%u bytes=%u dcd=%d intf=%d rssi=%d nf=%d cw=%d target=%lu passed=%lu difs=%ld\r\n",
+          queue_height, queued_bytes, dcd, interference_detected, current_rssi,
+          noise_floor, csma_cw, cw_wait_target, cw_wait_passed, difs_wait_start);
+      }
+    #endif
     if (csma_cw == -1) {
       csma_cw = random(cw_min, cw_max);
       cw_wait_target = csma_cw * csma_slot_ms;
@@ -1706,9 +1767,16 @@ void work_while_waiting() { loop(); }
 
 void loop() {
   if (radio_online) {
+    #if MODEM == SX1262 && BOARD_MODEL == BOARD_TDECK
+      LoRa->serviceInterrupt();
+    #endif
+
     #if MCU_VARIANT == MCU_ESP32
       modem_packet_t *modem_packet = NULL;
       if(modem_packet_queue && xQueueReceive(modem_packet_queue, &modem_packet, 0) == pdTRUE && modem_packet) {
+        #if BOARD_MODEL == BOARD_TDECK && RNODE_TDECK_DIAG
+          Serial.printf("[RNODE] host write rx len=%u rssi=%d snr_raw=%u\r\n", modem_packet->len, modem_packet->rssi, modem_packet->snr_raw);
+        #endif
         host_write_len = modem_packet->len;
         last_rssi      = modem_packet->rssi;
         last_snr_raw   = modem_packet->snr_raw;

@@ -290,7 +290,7 @@ char bt_devname[11];
 
     bool bt_confirm_pin_callback(uint32_t pin) {
       // Serial.printf("Confirm PIN callback: %d\n", pin);
-      return true;
+      return bt_allow_pairing;
     }
 
     void bt_update_passkey() {
@@ -301,6 +301,10 @@ char bt_devname[11];
 
     uint32_t bt_passkey_callback() {
       // Serial.println("API passkey request");
+      if (!bt_allow_pairing) {
+        SerialBT.disconnect();
+        return 0;
+      }
       if (pairing_pin == 0) { bt_update_passkey(); }
       return pairing_pin;
     }
@@ -310,13 +314,15 @@ char bt_devname[11];
     }
 
     bool bt_security_request_callback() {
-      if (bt_allow_pairing) {
-          // Serial.println("Accepting security request");
-          return true;
-        } else {
-          // Serial.println("Rejecting security request");
-          return false;
-        }
+      if (bt_allow_pairing || bt_bond_count() > 0) {
+        // Accept explicit pairing, and accept bonded reconnect encryption.
+        // Requiring the pairing window here breaks already-bonded Android
+        // reconnects after the timer expires.
+        return true;
+      }
+
+      SerialBT.disconnect();
+      return false;
     }
 
     void bt_authentication_complete_callback(esp_ble_auth_cmpl_t auth_result) {

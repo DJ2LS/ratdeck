@@ -53,6 +53,10 @@ public:
 
   void onReceive(void(*callback)(int));
 
+  #if BOARD_MODEL == BOARD_TDECK
+    void serviceInterrupt();
+  #endif
+
   void receive(int size = 0);
   void standby();
   void sleep();
@@ -138,6 +142,9 @@ private:
   int _fifo_rx_addr_ptr;
   uint8_t _packet[255];
   bool _preinit_done;
+  #if BOARD_MODEL == BOARD_TDECK
+    volatile bool _irq_pending;
+  #endif
   void (*_onReceive)(int);
 };
 

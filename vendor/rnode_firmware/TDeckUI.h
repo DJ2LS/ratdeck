@@ -10,6 +10,7 @@
 void display_unblank();
 void bt_enable_pairing();
 void bt_disable_pairing();
+int bt_bond_count();
 extern uint32_t bt_pairing_started;
 #define TD_PAIRING_WINDOW_MS 30000
 
@@ -323,18 +324,29 @@ void td_draw_pair_panel() {
     return;
   }
 
-  // Idle: pairing button
+  // Idle: paired devices can connect without opening pairing. The same panel
+  // remains tappable to pair an additional or re-paired host.
   int bw = 98; int bh = 48;
   int bx = TD_WF_X + (TD_WF_W - bw) / 2;
   int by = TD_WF_Y + 72;
+  bool has_bond = bt_bond_count() > 0;
   td_canvas->fillRoundRect(bx, by, bw, bh, 8, TD_CLR_BG_PANEL);
-  td_canvas->drawRoundRect(bx, by, bw, bh, 8, TD_CLR_ACCENT);
+  td_canvas->drawRoundRect(bx, by, bw, bh, 8, has_bond ? TD_CLR_GREEN : TD_CLR_ACCENT);
   td_canvas->setTextSize(1);
-  td_canvas->setTextColor(TD_CLR_ACCENT);
-  td_canvas->setCursor(bx + 25, by + 14);
-  td_canvas->print("Pair via");
-  td_canvas->setCursor(bx + 40, by + 28);
-  td_canvas->print("BLE");
+  if (has_bond) {
+    td_canvas->setTextColor(TD_CLR_GREEN);
+    td_canvas->setCursor(bx + 23, by + 10);
+    td_canvas->print("BLE ready");
+    td_canvas->setTextColor(TD_CLR_TEXT_DIM);
+    td_canvas->setCursor(bx + 19, by + 25);
+    td_canvas->print("tap to pair");
+  } else {
+    td_canvas->setTextColor(TD_CLR_ACCENT);
+    td_canvas->setCursor(bx + 25, by + 14);
+    td_canvas->print("Pair via");
+    td_canvas->setCursor(bx + 40, by + 28);
+    td_canvas->print("BLE");
+  }
 }
 
 void td_draw_waterfall() {

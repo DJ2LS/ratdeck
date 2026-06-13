@@ -182,6 +182,8 @@
 
 #if BOARD_MODEL == BOARD_CARDPUTER_ADV
   float disp_target_fps = 3;
+#elif BOARD_MODEL == BOARD_TDECK
+  float disp_target_fps = 4;
 #else
   float disp_target_fps = 7;
 #endif
@@ -196,6 +198,7 @@ float epd_update_fps  = 0.5;
   #define CARDPUTER_ADV_DISPLAY_INTENSITY_DEFAULT 96
 #elif BOARD_MODEL == BOARD_TDECK
   #define DISPLAY_BLANKING_TIMEOUT 60*1000
+  #define TDECK_DISPLAY_INTENSITY_DEFAULT 12
 #else
   #define DISPLAY_BLANKING_TIMEOUT 15*1000
 #endif
@@ -603,6 +606,10 @@ bool display_init() {
       #if BOARD_MODEL == BOARD_CARDPUTER_ADV
         if (display_intensity == 0xFF) {
           display_intensity = CARDPUTER_ADV_DISPLAY_INTENSITY_DEFAULT;
+        }
+      #elif BOARD_MODEL == BOARD_TDECK
+        if (display_intensity == 0xFF) {
+          display_intensity = TDECK_DISPLAY_INTENSITY_DEFAULT;
         }
       #endif
       display_unblank_intensity = display_intensity;
