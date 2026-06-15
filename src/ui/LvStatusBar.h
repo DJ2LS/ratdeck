@@ -20,6 +20,7 @@ public:
     void setGPSFix(bool hasFix);
     void setBatteryPercent(int pct);
     void setBatteryDisplay(uint8_t mode);  // 0 = percent, 1 = bar
+    void setCharging(bool charging);
     void flashAnnounce();
     void showToast(const char* msg, uint32_t durationMs = 1500);
 
@@ -55,8 +56,11 @@ private:
     int _autoIfacePeers = -1;  // -1 hidden, 0 yellow, >0 green
     bool _gpsFix = false;
     bool _use24h = false;
+
+    // Battery
     int _battPct = -1;
     uint8_t _battDisplay = 0;
+    bool _isCharging = false;
 
     int _lastHour = -1;
     int _lastMinute = -1;

@@ -257,6 +257,21 @@ void LvStatusBar::refreshBattery() {
 
         lv_bar_set_value(_barBatt, _battPct < 0 ? 0 : _battPct, LV_ANIM_OFF);
 
+        uint32_t indicatorCol;
+        if (_isCharging) {
+            indicatorCol = Theme::SUCCESS;
+        /*
+        // Future stuff, we can enable it, as soon as battery levels are working correctly
+        } else if (_battPct >= 0 && _battPct <= 15) {
+            indicatorCol = Theme::ERROR_CLR;
+        } else if (_battPct >= 0 && _battPct <= 30) {
+            indicatorCol = Theme::WARNING_CLR;
+        */
+        } else {
+            indicatorCol = 0xFFFFFF;
+        }
+        lv_obj_set_style_bg_color(_barBatt, lv_color_hex(indicatorCol), LV_PART_INDICATOR);
+
     } else {
         // Percent mode
         lv_obj_clear_flag(_lblBatt, LV_OBJ_FLAG_HIDDEN);
@@ -266,11 +281,15 @@ void LvStatusBar::refreshBattery() {
         uint32_t col = Theme::TEXT_MUTED;
         if (_battPct < 0) {
             snprintf(buf, sizeof(buf), "--%%");
+        } else if (_isCharging) {
+            snprintf(buf, sizeof(buf), "+%d%%", _battPct);
+            col = Theme::SUCCESS;
         } else {
             snprintf(buf, sizeof(buf), "%d%%", _battPct);
             col = Theme::TEXT_PRIMARY;
-            if (_battPct <= 15) col = Theme::ERROR_CLR;
-            else if (_battPct <= 30) col = Theme::WARNING_CLR;
+            // Future stuff, we can enable it, as soon as battery levels are working correctly
+            //if (_battPct <= 15)      col = Theme::ERROR_CLR;
+            //else if (_battPct <= 30) col = Theme::WARNING_CLR;
         }
         lv_label_set_text(_lblBatt, buf);
         lv_obj_set_style_text_color(_lblBatt, lv_color_hex(col), 0);
@@ -278,6 +297,13 @@ void LvStatusBar::refreshBattery() {
 
 
 }
+
+void LvStatusBar::setCharging(bool charging) {
+    if (_isCharging == charging) return;
+    _isCharging = charging;
+    refreshBattery();
+}
+
 
 void LvStatusBar::refreshTimeColor() {
     if (!_lblTime) return;

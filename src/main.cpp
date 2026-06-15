@@ -2146,7 +2146,9 @@ void loop() {
     if (millis() - lastStatusUpdate >= STATUS_UPDATE_MS) {
         lastStatusUpdate = millis();
         if (powerMgr.isScreenOn()) {
+            // Update battery related paramt
             ui.lvStatusBar().setBatteryPercent(powerMgr.batteryPercent());
+            ui.lvStatusBar().setCharging(powerMgr.isCharging());
             ui.lvStatusBar().setBatteryDisplay(userConfig.settings().batteryDisplay); // Switch between bar and percent
             // Update TCP connection indicator
             bool anyTcpUp = false;

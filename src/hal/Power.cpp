@@ -39,6 +39,11 @@ int Power::batteryPercent() const {
     return (int)((v - 3.0f) / 1.2f * 100.0f);
 }
 
+bool Power::isCharging() const {
+    return batteryVoltage() >= 4.0f;
+}
+
+
 uint8_t Power::percentToPWM(uint8_t pct) const {
     if (pct == 0) return 0;
     if (pct >= 100) return 255;

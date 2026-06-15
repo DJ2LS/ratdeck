@@ -583,17 +583,37 @@ void LvSettingsScreen::buildItems() {
         }});
 
     // Battery
-    int battStart = idx;
-    _items.push_back({"Battery Display", SettingType::ENUM_CHOICE,
-        [&s]() { return (int)s.batteryDisplay; },
-        [&s](int v) { s.batteryDisplay = (uint8_t)v; },
-        nullptr, 0, 1, 1, {"Percent", "Bar"}});
-    idx++;
-    _categories.push_back({"Battery", battStart, idx - battStart,
-        [&s]() -> String {
-            return s.batteryDisplay == 0 ? String("Percent") : String("Bar");
-        }});
-
+int battStart = idx;
+_items.push_back({"Battery Display", SettingType::ENUM_CHOICE,
+    [&s]() { return (int)s.batteryDisplay; },
+    [&s](int v) { s.batteryDisplay = (uint8_t)v; },
+    nullptr, 0, 1, 1, {"Percent", "Bar"}});
+idx++;
+_items.push_back({"Voltage", SettingType::READONLY, nullptr, nullptr,
+    [this](int) -> String {
+        if (!_power) return String("--");
+        char buf[12];
+        snprintf(buf, sizeof(buf), "%.2fV", _power->batteryVoltage());
+        return String(buf);
+    }});
+idx++;
+_items.push_back({"Charge", SettingType::READONLY, nullptr, nullptr,
+    [this](int) -> String {
+        if (!_power) return String("--");
+        return String(_power->batteryPercent()) + "%";
+    }});
+idx++;
+_categories.push_back({"Battery", battStart, idx - battStart,
+    [this, &s]() -> String {
+        String summary = s.batteryDisplay == 0 ? String("Percent") : String("Bar");
+        if (_power) {
+            summary += " / ";
+            char buf[8];
+            snprintf(buf, sizeof(buf), "%.2fV", _power->batteryVoltage());
+            summary += buf;
+        }
+        return summary;
+    }});
 
     // LoRa link
     int radioStart = idx;
