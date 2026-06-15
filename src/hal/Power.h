@@ -23,7 +23,10 @@ public:
     float batteryVoltage() const;
     int batteryPercent() const;
     bool isCharging() const;
-    
+    void setBatteryModel(uint8_t model);  // 0=lipo, 1=linear
+    void setChargeThreshold(float v);
+    void setFullBatteryVoltage(float v);
+
     // Display backlight — accepts percentage 1-100
     void setBrightness(uint8_t percent);
     void setDimTimeout(uint16_t seconds) {
@@ -63,4 +66,9 @@ private:
     bool _kbAutoOff = false;
     bool _kbLitBeforeOff = false;
     bool _justWokeFromOff = false;
+
+    // Battery
+    uint8_t _batteryModel = 0;
+    float _chargeThreshold = 4.1f;
+    float _fullBatteryV = 3.8f;
 };

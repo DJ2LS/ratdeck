@@ -107,7 +107,10 @@ bool UserConfig::parseJson(const String& json) {
     _settings.bleEnabled       = false;
 
     // battery settings
-    _settings.batteryDisplay   = doc["batt_display"] | 0;
+    _settings.batteryDisplay     = doc["batt_display"] | 0;
+    _settings.batteryModel       = doc["batt_model"]   | 0;
+    _settings.chargeThresholdV = doc["charge_thresh_v"] | 4.1f;
+    _settings.fullBatteryV     = doc["full_battery_v"]  | 3.8f;
 
     _settings.gpsTimeEnabled     = doc["gps_time"]     | true;
     _settings.gpsLocationEnabled = doc["gps_location"] | false;
@@ -186,7 +189,9 @@ String UserConfig::serializeToJson() {
 
     // battery settings
     doc["batt_display"] = _settings.batteryDisplay;
-
+    doc["batt_model"]   = _settings.batteryModel;
+    doc["charge_thresh_v"] = _settings.chargeThresholdV;
+    doc["full_battery_v"]  = _settings.fullBatteryV;
 
     doc["gps_time"]     = _settings.gpsTimeEnabled;
     doc["gps_location"] = _settings.gpsLocationEnabled;

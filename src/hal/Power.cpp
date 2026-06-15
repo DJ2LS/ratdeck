@@ -6,6 +6,40 @@
 extern Display display;
 extern Keyboard keyboard;
 
+// Battery type lookup table for getting voltage vs percent
+// interpolated chart from https://www.researchgate.net/figure/Li-ion-battery-discharge-voltage-curve_fig5_363575973
+// the manual chart reading entries are read from chart, while the others are interpolated
+namespace {
+struct VoltPct { float v; int pct; };
+static const VoltPct LIPO_CURVE[] = {
+    {4.20f, 100}, // manual chart reading
+    {4.00f,  95},
+    {3.80f,  90}, // manual chart reading
+    {3.78f,  85},
+    {3.75f,  80}, // manual chart reading
+    {3.74f,  75},
+    {3.73f,  70},
+    {3.71f,  65},
+    {3.70f,  60}, // manual chart reading
+    {3.69f,  55},
+    {3.68f,  50},
+    {3.66f,  45},
+    {3.65f,  40}, // manual chart reading
+    {3.64f,  35},
+    {3.63f,  30},
+    {3.61f,  25},
+    {3.60f,  20}, // manual chart reading
+    {3.55f,  15},
+    {3.50f,  10}, // manual chart reading
+    {3.25f,   5}, // manual chart reading
+    {3.00f,   0}, // manual chart reading
+};
+constexpr int LIPO_CURVE_N = sizeof(LIPO_CURVE) / sizeof(LIPO_CURVE[0]);
+}
+
+
+
+
 void Power::enablePeripherals() {
     // CRITICAL: GPIO 10 must be HIGH to enable all T-Deck Plus peripherals
     pinMode(BOARD_POWER_PIN, OUTPUT);
@@ -33,14 +67,44 @@ float Power::batteryVoltage() const {
 
 int Power::batteryPercent() const {
     float v = batteryVoltage();
-    // LiPo voltage curve approximation
-    if (v >= 4.2f) return 100;
-    if (v <= 3.0f) return 0;
-    return (int)((v - 3.0f) / 1.2f * 100.0f);
+
+    // Compensate for load-induced voltage drop when running on battery.
+    // Calculates an offset and adds it to real voltage for to be able using default LiPo lookup table
+    if (!isCharging())
+        v += (4.2f - _fullBatteryV);
+
+    // Clamp to valid curve range.
+    v = constrain(v, 3.0f, 4.2f);
+
+    if (_batteryModel == 1) {
+        // Linear: distribution across 3.0–4.2V.
+        return (int)((v - 3.0f) / 1.2f * 100.0f);
+    }
+
+    // LiPo: interpolate between nearest table entries.
+    for (int i = 0; i < LIPO_CURVE_N - 1; i++) {
+        if (v >= LIPO_CURVE[i + 1].v) {
+            float t = (v - LIPO_CURVE[i + 1].v) / (LIPO_CURVE[i].v - LIPO_CURVE[i + 1].v);
+            return (int)(LIPO_CURVE[i + 1].pct + t * (LIPO_CURVE[i].pct - LIPO_CURVE[i + 1].pct));
+        }
+    }
+    return 0;
+}
+
+void Power::setBatteryModel(uint8_t model) {
+    _batteryModel = model;
 }
 
 bool Power::isCharging() const {
     return batteryVoltage() >= 4.0f;
+}
+
+void Power::setChargeThreshold(float v)   {
+    _chargeThreshold = v;
+}
+
+void Power::setFullBatteryVoltage(float v) {
+    _fullBatteryV = v;
 }
 
 
