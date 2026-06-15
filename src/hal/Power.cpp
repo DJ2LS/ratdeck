@@ -96,7 +96,7 @@ void Power::setBatteryModel(uint8_t model) {
 }
 
 bool Power::isCharging() const {
-    return batteryVoltage() >= 4.0f;
+    return batteryVoltage() >= _chargeThreshold;
 }
 
 void Power::setChargeThreshold(float v)   {
