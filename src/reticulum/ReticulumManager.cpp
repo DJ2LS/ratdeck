@@ -274,6 +274,12 @@ bool ReticulumManager::begin(SX1262* radio, FlashStore* flash, bool loraEnabled)
     return true;
 }
 
+bool ReticulumManager::isLoRaNextHop(const RNS::Bytes& destHash) const {
+    if (!_loraImpl) return false;
+    RNS::Interface nextHop = RNS::Transport::next_hop_interface(destHash);
+    return nextHop && nextHop.get() == _loraImpl;
+}
+
 bool ReticulumManager::loadOrCreateIdentity() {
     // Tier 1: Flash (LittleFS)
     if (_flash->exists(PATH_IDENTITY)) {

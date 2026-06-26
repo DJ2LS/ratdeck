@@ -711,7 +711,7 @@ static constexpr uint8_t LITE_TRANSPORT_ID[16] = {
     'r', 's', 'l', 'i', 't', 'e', '-', 'h',
     'e', 'l', 't', 'e', 'c', '-', 'v', '3'
 };
-static constexpr size_t RNODE_DIAG_SINGLE_MTU = 254;
+static constexpr size_t RNODE_DIAG_SINGLE_MTU = RSDECK_RNODE_SINGLE_FRAME_RAW_MAX;
 static RNS::Bytes diagnosticLiteLinkId;
 
 static bool sendDiagnosticRawReticulum(const RNS::Bytes& raw, const char* label) {
