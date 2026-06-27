@@ -6,8 +6,8 @@
 
 #define RSDECK_VERSION_MAJOR  2
 #define RSDECK_VERSION_MINOR  0
-#define RSDECK_VERSION_PATCH  0
-#define RSDECK_VERSION_STRING "2.0.0"
+#define RSDECK_VERSION_PATCH  1
+#define RSDECK_VERSION_STRING "2.0.1"
 
 // --- Feature Flags ---
 #define HAS_DISPLAY     true
