@@ -711,7 +711,7 @@ static constexpr uint8_t LITE_TRANSPORT_ID[16] = {
     'r', 's', 'l', 'i', 't', 'e', '-', 'h',
     'e', 'l', 't', 'e', 'c', '-', 'v', '3'
 };
-static constexpr size_t RNODE_DIAG_SINGLE_MTU = 254;
+static constexpr size_t RNODE_DIAG_SINGLE_MTU = RSDECK_RNODE_SINGLE_FRAME_RAW_MAX;
 static RNS::Bytes diagnosticLiteLinkId;
 
 static bool sendDiagnosticRawReticulum(const RNS::Bytes& raw, const char* label) {
@@ -1878,7 +1878,9 @@ void loop() {
     handleSerialCommands();
 
     // 1. Input polling
+    bool screenWasOn = powerMgr.isScreenOn();
     inputManager.update();
+    bool wakeOnlyInput = !screenWasOn && inputManager.hadStrongActivity();
     if (inputManager.hadStrongActivity()) {
         powerMgr.activity();       // Keyboard/touch: wake from any state
     } else if (inputManager.hadActivity()) {
@@ -1893,7 +1895,7 @@ void loop() {
     }
 
     // 3. Key event dispatch
-    if (inputManager.hasKeyEvent()) {
+    if (inputManager.hasKeyEvent() && !wakeOnlyInput) {
         const KeyEvent& evt = inputManager.getKeyEvent();
 
         // Help overlay intercepts all keys when visible

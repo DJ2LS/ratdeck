@@ -4,6 +4,7 @@
 #include <Transport.h>
 #include <time.h>
 #include <algorithm>
+#include <exception>
 
 LXMFManager* LXMFManager::_instance = nullptr;
 std::map<std::string, LXMFManager::PendingProof> LXMFManager::_pendingProofs;
@@ -71,7 +72,7 @@ void LXMFManager::loop() {
 
         // Keep unresolved peers from churning the UI loop or LoRa airtime.
         // The first attempt is immediate; later path/identity retries happen
-        // every 10s and are capped in sendDirect().
+        // every 10s and are capped in attemptOutboundDelivery().
         if (msg.retries > 0 && (millis() - msg.lastRetryMs) < LXMF_DISCOVERY_RETRY_INTERVAL_MS) {
             ++it;
             continue;
@@ -79,7 +80,7 @@ void LXMFManager::loop() {
 
         msg.lastRetryMs = millis();
 
-        if (sendDirect(msg)) {
+        if (attemptOutboundDelivery(msg)) {
             processed++;
             Serial.printf("[LXMF] Queue drain: status=%s dest=%s\n",
                           msg.statusStr(), msg.destHash.toHex().substr(0, 8).c_str());
@@ -98,7 +99,7 @@ void LXMFManager::loop() {
             clearDeliveryPreference(msg);
             it = _outQueue.erase(it);
         } else {
-            // sendDirect returned false — message stays in queue, try next
+            // attemptOutboundDelivery returned false — message stays in queue, try next
             ++it;
         }
     }
@@ -130,13 +131,6 @@ bool LXMFManager::sendMessage(const RNS::Bytes& destHash, const std::string& con
     if (payload.empty()) {
         Serial.println("[LXMF] Message pack failed");
         return false;
-    }
-    if (payload.size() > RSDECK_LXMF_SINGLE_FRAME_MAX) {
-        msg.status = LXMFStatus::FAILED;
-        if (_store) _store->saveMessage(msg);
-        Serial.printf("[LXMF] Message too large for T-Deck safe path (%d > %d); resource transfer disabled\n",
-                      (int)payload.size(), RSDECK_LXMF_SINGLE_FRAME_MAX);
-        return true;
     }
     if (preference == DeliveryPreference::Link) {
         _linkRequiredIds.insert(msg.messageId.toHex());
@@ -193,8 +187,8 @@ bool LXMFManager::ensureOutboundLink(const RNS::Destination& dest, const RNS::By
     return false;
 }
 
-bool LXMFManager::sendDirect(LXMFMessage& msg) {
-    Serial.printf("[LXMF] sendDirect: dest=%s link=%s pending=%s\n",
+bool LXMFManager::attemptOutboundDelivery(LXMFMessage& msg) {
+    Serial.printf("[LXMF] attemptOutboundDelivery: dest=%s link=%s pending=%s\n",
         msg.destHash.toHex().substr(0, 12).c_str(),
         _outLink ? (_outLink.status() == RNS::Type::Link::ACTIVE ? "ACTIVE" : "INACTIVE") : "NONE",
         _outLinkPending ? "yes" : "no");
@@ -267,12 +261,6 @@ bool LXMFManager::sendDirect(LXMFMessage& msg) {
     if (payload.empty()) { Serial.println("[LXMF] packFull returned empty!"); msg.status = LXMFStatus::FAILED; return true; }
     const std::string msgIdHex = msg.messageId.toHex();
     const bool requireLink = _linkRequiredIds.count(msgIdHex) > 0;
-    if (payload.size() > RSDECK_LXMF_SINGLE_FRAME_MAX) {
-        Serial.printf("[LXMF] Refusing resource-sized message (%d bytes); T-Deck safe cap is %d\n",
-                      (int)payload.size(), RSDECK_LXMF_SINGLE_FRAME_MAX);
-        msg.status = LXMFStatus::FAILED;
-        return true;
-    }
 
     msg.status = LXMFStatus::SENDING;
     bool sent = false;
@@ -334,24 +322,60 @@ bool LXMFManager::sendDirect(LXMFMessage& msg) {
             return false;
         }
 
-        // Use opportunistic only for packets that fit in a single LoRa frame (254 bytes).
-        // Larger packets require split-frame over LoRa, which is unreliable — any single
-        // frame loss (CRC error, collision, half-duplex timing) kills the entire transfer
-        // with no recovery. Link-based delivery handles retransmission at the protocol level.
-        if (payloadBytes.size() <= RSDECK_LXMF_SINGLE_FRAME_MAX) {
-            // Fits in single LoRa frame — send opportunistic
-            Serial.printf("[LXMF] sending opportunistic: %d bytes to %s\n",
-                          (int)payloadBytes.size(), outDest.hash().toHex().substr(0, 12).c_str());
-            RNS::Packet packet(outDest, payloadBytes);
-            RNS::PacketReceipt receipt = packet.send();
-            if (receipt) { sent = true; registerProofTracking(receipt, msg); }
+        // Use opportunistic only when the LXMF payload fits in a normal
+        // Reticulum packet and, on LoRa, the final raw packet fits in one
+        // RNode RF frame. The 254-byte RNode limit applies after encryption.
+        const bool opportunisticPayloadFits = payloadBytes.size() <= RNS::Type::Reticulum::MDU;
+        bool packetPacked = false;
+        size_t rawLen = 0;
+        size_t estimatedLoRaRawLen = 0;
+        const bool loraPath = _rns && _rns->isLoRaNextHop(msg.destHash);
+        const uint8_t hops = RNS::Transport::hops_to(msg.destHash);
+
+        if (!opportunisticPayloadFits) {
+            Serial.printf("[LXMF] Opportunistic payload exceeds MDU: payload=%d mdu=%u\n",
+                          (int)payloadBytes.size(), (unsigned)RNS::Type::Reticulum::MDU);
         } else {
-            // Too large for single frame — need link + resource transfer
-            Serial.printf("[LXMF] Message needs link delivery (%d bytes > %d single-frame), retry %d\n",
-                          (int)payloadBytes.size(), RSDECK_LXMF_SINGLE_FRAME_MAX, msg.retries);
+            RNS::Packet packet(outDest, payloadBytes);
+            const bool transportWrapsHeader2 = loraPath && hops > 1
+                && packet.header_type() == RNS::Type::Packet::HEADER_1;
+
+            try {
+                packet.pack();
+                packetPacked = true;
+                rawLen = packet.raw().size();
+                estimatedLoRaRawLen = rawLen
+                    + (transportWrapsHeader2 ? RNS::Type::Reticulum::DESTINATION_LENGTH : 0);
+            } catch (const std::exception& e) {
+                Serial.printf("[LXMF] Opportunistic pack failed (%s); trying link delivery\n", e.what());
+            }
+
+            const bool singleFrameSafe = packetPacked && (!loraPath
+                || estimatedLoRaRawLen <= RSDECK_RNODE_SINGLE_FRAME_RAW_MAX);
+
+            if (singleFrameSafe) {
+                Serial.printf("[LXMF] sending opportunistic: payload=%d raw=%u lora_raw=%u lora=%s hops=%u to %s\n",
+                              (int)payloadBytes.size(), (unsigned)rawLen,
+                              (unsigned)estimatedLoRaRawLen,
+                              loraPath ? "yes" : "no", (unsigned)hops,
+                              outDest.hash().toHex().substr(0, 12).c_str());
+                RNS::PacketReceipt receipt = packet.send();
+                if (receipt) { sent = true; registerProofTracking(receipt, msg); }
+            }
+        }
+
+        if (!sent) {
+            // Too large for single-frame LoRa, or too large for an opportunistic
+            // Reticulum packet. Use link/resource delivery so packet loss is
+            // recoverable above the physical RNode split-frame layer.
+            Serial.printf("[LXMF] Message needs link delivery: payload=%d raw=%u lora_raw=%u limit=%u lora=%s hops=%u retry=%d\n",
+                          (int)payloadBytes.size(), (unsigned)rawLen,
+                          (unsigned)estimatedLoRaRawLen,
+                          (unsigned)RSDECK_RNODE_SINGLE_FRAME_RAW_MAX,
+                          loraPath ? "yes" : "no", (unsigned)hops, msg.retries);
             if (msg.retries % 3 == 0 && (!_outLink || _outLinkDestHash != msg.destHash
                 || _outLink.status() != RNS::Type::Link::ACTIVE)) {
-                ensureOutboundLink(outDest, msg.destHash, "resource transfer");
+                ensureOutboundLink(outDest, msg.destHash, loraPath ? "single-frame LoRa overflow" : "resource transfer");
             }
             msg.retries++;
             if (msg.retries >= 30) {

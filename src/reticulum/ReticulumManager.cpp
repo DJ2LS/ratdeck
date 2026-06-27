@@ -210,7 +210,7 @@ bool ReticulumManager::begin(SX1262* radio, FlashStore* flash, bool loraEnabled)
     if (loraEnabled) {
         _loraImpl = new LoRaInterface(radio, "LoRa");
         _loraIface = _loraImpl;
-        _loraIface.mode(RNS::Type::Interface::MODE_GATEWAY);
+        _loraIface.mode(RNS::Type::Interface::MODE_ROAMING);
         RNS::Transport::register_interface(_loraIface);
         if (!_loraImpl->start()) {
             Serial.println("[RNS] WARNING: LoRa interface failed to start");
@@ -272,6 +272,12 @@ bool ReticulumManager::begin(SX1262* radio, FlashStore* flash, bool loraEnabled)
     _transportActive = true;
     Serial.println("[RNS] Endpoint active");
     return true;
+}
+
+bool ReticulumManager::isLoRaNextHop(const RNS::Bytes& destHash) const {
+    if (!_loraImpl) return false;
+    RNS::Interface nextHop = RNS::Transport::next_hop_interface(destHash);
+    return nextHop && nextHop.get() == _loraImpl;
 }
 
 bool ReticulumManager::loadOrCreateIdentity() {

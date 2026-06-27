@@ -6,8 +6,8 @@
 
 #define RSDECK_VERSION_MAJOR  2
 #define RSDECK_VERSION_MINOR  0
-#define RSDECK_VERSION_PATCH  0
-#define RSDECK_VERSION_STRING "2.0.0"
+#define RSDECK_VERSION_PATCH  1
+#define RSDECK_VERSION_STRING "2.0.1"
 
 // --- Feature Flags ---
 #define HAS_DISPLAY     true
@@ -68,7 +68,7 @@
 #define RSDECK_MAX_MESSAGES_PER_CONV 100
 #define FLASH_MSG_CACHE_LIMIT         20
 #define RSDECK_MAX_OUTQUEUE          20
-#define RSDECK_LXMF_SINGLE_FRAME_MAX 254   // T-Deck-safe payload cap until resource transfers are fixed
+#define RSDECK_RNODE_SINGLE_FRAME_RAW_MAX 254  // Raw Reticulum bytes per RNode LoRa RF frame
 #define PATH_PERSIST_INTERVAL_MS  60000
 
 // --- Power Management ---
