@@ -56,6 +56,7 @@ public:
 
     RNS::Destination& destination() { return _destination; }
     LoRaInterface* loraInterface() { return _loraImpl; }
+    bool isLoRaNextHop(const RNS::Bytes& destHash) const;
 
 private:
     bool loadOrCreateIdentity();
